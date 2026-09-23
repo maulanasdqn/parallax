@@ -1,0 +1,11 @@
+[package]
+name = "parallax-server"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+parallax-core = { path = "../parallax-core" }
+parallax-proxy = { path = "../parallax-proxy" }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

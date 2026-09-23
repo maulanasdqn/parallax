@@ -1,0 +1,9 @@
+[workspace]
+resolver = "2"
+members = ["parallax-core", "parallax-proxy", "parallax-server"]
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["net", "io-util"] }
+async-trait = "0.1"
+tracing = "0.1"
+tracing-subscriber = "0.3"
