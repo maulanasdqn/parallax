@@ -15,7 +15,7 @@ impl Database {
     }
 
     pub async fn migrate(&self) {
-        sqlx::query(include_str!("../migrations/001_init.sql"))
+        sqlx::query(include_str!("../../parallax-api/migrations/001_init.sql"))
             .execute(&self.pool)
             .await
             .ok();
