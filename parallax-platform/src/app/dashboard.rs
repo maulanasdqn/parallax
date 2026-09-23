@@ -1,21 +1,35 @@
 use topcoat::{
     Result,
+    context::{Cx, app_context},
     router::page,
     view::{component, view},
 };
 
+use crate::api::ApiClient;
+
 #[page("/")]
-async fn home() -> Result {
+async fn home(cx: &Cx) -> Result {
+    let api = app_context::<ApiClient>(cx);
+    let users = api.list_users().await;
+    let sessions = api.list_sessions().await;
+    let carriers = api.list_carriers().await;
+
+    let user_count = users.len().to_string();
+    let active = sessions.iter().filter(|s| s.active).count().to_string();
+    let bw = format_bytes(sessions.iter().map(|s| (s.bytes_up + s.bytes_down) as u64).sum());
+    let online = carriers.iter().filter(|c| c.online).count();
+    let carrier_text = if online > 0 { format!("{online} online") } else { "Direct only".into() };
+
     view! {
         <div>
             <h2 class="text-2xl font-semibold tracking-tight">"Dashboard"</h2>
             <p class="text-zinc-400 mt-1 text-sm">"Overview of your proxy infrastructure"</p>
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-                stat_card(id: "stat-users", label: "Total Users")
-                stat_card(id: "stat-sessions", label: "Active Sessions")
-                stat_card(id: "stat-bandwidth", label: "Total Bandwidth")
-                stat_card(id: "stat-carriers", label: "Carriers")
+                stat_card(label: "Total Users", value: &user_count)
+                stat_card(label: "Active Sessions", value: &active)
+                stat_card(label: "Total Bandwidth", value: &bw)
+                stat_card(label: "Carriers", value: &carrier_text)
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
@@ -23,37 +37,15 @@ async fn home() -> Result {
                 quick_connect()
             </div>
         </div>
-
-        <script>
-            "const API = window.__API_URL || 'http://localhost:3001';"
-            "fetch(API + '/api/users').then(r => r.json()).then(d => {"
-            "  document.getElementById('stat-users').textContent = d.length;"
-            "}).catch(() => {});"
-            "fetch(API + '/api/sessions').then(r => r.json()).then(d => {"
-            "  document.getElementById('stat-sessions').textContent = d.filter(s => s.active).length;"
-            "  const bytes = d.reduce((a, s) => a + s.bytes_up + s.bytes_down, 0);"
-            "  document.getElementById('stat-bandwidth').textContent = formatBytes(bytes);"
-            "}).catch(() => {});"
-            "fetch(API + '/api/carriers').then(r => r.json()).then(d => {"
-            "  const online = d.filter(c => c.online).length;"
-            "  document.getElementById('stat-carriers').textContent = online > 0 ? online + ' online' : 'Direct only';"
-            "}).catch(() => {});"
-            "function formatBytes(b) {"
-            "  if (b === 0) return '0 B';"
-            "  const u = ['B','KB','MB','GB','TB'];"
-            "  const i = Math.floor(Math.log(b) / Math.log(1024));"
-            "  return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];"
-            "}"
-        </script>
     }
 }
 
 #[component]
-async fn stat_card(id: &str, label: &str) -> Result {
+async fn stat_card(label: &str, value: &str) -> Result {
     view! {
         <div class="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
             <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider">(label)</p>
-            <p class="text-2xl font-semibold mt-2" id=(id)>"--"</p>
+            <p class="text-2xl font-semibold mt-2">(value)</p>
         </div>
     }
 }
@@ -120,4 +112,14 @@ async fn quick_connect() -> Result {
             </div>
         </div>
     }
+}
+
+fn format_bytes(bytes: u64) -> String {
+    if bytes == 0 {
+        return "0 B".into();
+    }
+    let units = ["B", "KB", "MB", "GB", "TB"];
+    let i = (bytes as f64).log(1024.0).floor() as usize;
+    let val = bytes as f64 / 1024_f64.powi(i as i32);
+    format!("{val:.1} {}", units[i.min(units.len() - 1)])
 }
