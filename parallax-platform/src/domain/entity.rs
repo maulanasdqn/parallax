@@ -1,38 +1,46 @@
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+use zod_rs::prelude::*;
 
 pub type UserId = Uuid;
 pub type PlanId = Uuid;
 pub type CarrierId = Uuid;
-pub type SessionId = Uuid;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct User {
-    pub id: UserId,
+    pub id: Uuid,
     pub email: String,
-    pub plan_id: PlanId,
+    pub plan_id: Uuid,
     pub api_key: String,
     pub active: bool,
     pub created_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Plan {
-    pub id: PlanId,
+    pub id: Uuid,
     pub name: String,
-    pub bandwidth_limit_bytes: u64,
-    pub concurrent_limit: u32,
-    pub price_cents: u32,
+    pub bandwidth_limit_bytes: i64,
+    pub concurrent_limit: i32,
+    pub price_cents: i32,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Carrier {
-    pub id: CarrierId,
+    pub id: Uuid,
     pub name: String,
     pub country: String,
     pub upstream_addr: String,
     pub online: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize, ZodSchema)]
+pub struct CreateUserInput {
+    #[zod(email)]
+    pub email: String,
+    #[zod(min_length(1))]
+    pub plan_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -42,20 +50,30 @@ pub struct Credential {
     pub password: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, ZodSchema)]
+pub struct CreateCarrierInput {
+    #[zod(min_length(2), max_length(50))]
+    pub name: String,
+    #[zod(min_length(2), max_length(10))]
+    pub country: String,
+    #[zod(min_length(5))]
+    pub upstream_addr: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Session {
-    pub id: SessionId,
-    pub user_id: UserId,
-    pub carrier_id: CarrierId,
-    pub bytes_up: u64,
-    pub bytes_down: u64,
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub carrier_id: Option<Uuid>,
+    pub bytes_up: i64,
+    pub bytes_down: i64,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UsageRecord {
-    pub user_id: UserId,
+    pub user_id: Uuid,
     pub total_bytes: u64,
     pub session_count: u64,
 }

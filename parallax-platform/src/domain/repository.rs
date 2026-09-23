@@ -1,9 +1,7 @@
 use async_trait::async_trait;
 use parallax_core::Result;
 
-use super::entity::{
-    Carrier, CarrierId, Plan, PlanId, Session, SessionId, UsageRecord, User, UserId,
-};
+use super::entity::{Carrier, CarrierId, Plan, PlanId, Session, UsageRecord, User, UserId};
 
 #[async_trait]
 pub trait UserRepository: Send + Sync {
@@ -35,11 +33,11 @@ pub trait CarrierRepository: Send + Sync {
 
 #[async_trait]
 pub trait SessionRepository: Send + Sync {
-    async fn find_by_id(&self, id: SessionId) -> Result<Option<Session>>;
+    async fn find_by_id(&self, id: uuid::Uuid) -> Result<Option<Session>>;
     async fn list_by_user(&self, user_id: UserId) -> Result<Vec<Session>>;
     async fn list_active(&self) -> Result<Vec<Session>>;
     async fn create(&self, session: Session) -> Result<Session>;
-    async fn end_session(&self, id: SessionId, bytes_up: u64, bytes_down: u64) -> Result<()>;
+    async fn end_session(&self, id: uuid::Uuid, bytes_up: u64, bytes_down: u64) -> Result<()>;
 }
 
 #[async_trait]
