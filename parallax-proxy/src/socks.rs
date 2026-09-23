@@ -1,7 +1,7 @@
 use async_trait::async_trait;
 use parallax_core::{
-    AddressResolver, AuthMethod, Authenticator, Command, ConnectionHandler, Reply, Result,
-    TargetAddr, ProxyError, SOCKS_VERSION, write_reply,
+    AddressResolver, AuthMethod, Authenticator, Command, ConnectionHandler, Connector, ProxyError,
+    Reply, Result, TargetAddr, SOCKS_VERSION, write_reply,
 };
 use std::net::SocketAddr;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
@@ -79,16 +79,34 @@ impl AddressResolver for TokioResolver {
     }
 }
 
-pub struct SocksHandler<A: Authenticator, R: AddressResolver> {
-    authenticator: A,
+pub struct DirectConnector<R: AddressResolver> {
     resolver: R,
 }
 
-impl<A: Authenticator, R: AddressResolver> SocksHandler<A, R> {
-    pub fn new(authenticator: A, resolver: R) -> Self {
+impl<R: AddressResolver> DirectConnector<R> {
+    pub fn new(resolver: R) -> Self {
+        Self { resolver }
+    }
+}
+
+#[async_trait]
+impl<R: AddressResolver + 'static> Connector for DirectConnector<R> {
+    async fn connect(&self, addr: TargetAddr, port: u16) -> Result<TcpStream> {
+        let target = self.resolver.resolve(addr, port).await?;
+        TcpStream::connect(target).await.map_err(ProxyError::Io)
+    }
+}
+
+pub struct SocksHandler<A: Authenticator, C: Connector> {
+    authenticator: A,
+    connector: C,
+}
+
+impl<A: Authenticator, C: Connector> SocksHandler<A, C> {
+    pub fn new(authenticator: A, connector: C) -> Self {
         Self {
             authenticator,
-            resolver,
+            connector,
         }
     }
 
@@ -129,48 +147,31 @@ impl<A: Authenticator, R: AddressResolver> SocksHandler<A, R> {
         let fallback: SocketAddr = ([0, 0, 0, 0], 0).into();
 
         match cmd {
-            Command::Connect => self.connect(stream, addr, port).await,
+            Command::Connect => {
+                match self.connector.connect(addr, port).await {
+                    Ok(mut target) => {
+                        let bind = target.local_addr().unwrap_or(fallback);
+                        write_reply(stream, Reply::Succeeded, bind).await?;
+                        copy_bidirectional(stream, &mut target).await?;
+                        Ok(())
+                    }
+                    Err(e) => {
+                        let _ = write_reply(stream, Reply::ConnectionRefused, fallback).await;
+                        Err(e)
+                    }
+                }
+            }
             _ => {
                 let _ = write_reply(stream, Reply::CommandNotSupported, fallback).await;
                 Err(ProxyError::UnsupportedCommand)
             }
         }
     }
-
-    async fn connect(
-        &self,
-        stream: &mut TcpStream,
-        addr: TargetAddr,
-        port: u16,
-    ) -> Result<()> {
-        let fallback: SocketAddr = ([0, 0, 0, 0], 0).into();
-
-        let target_addr = match self.resolver.resolve(addr, port).await {
-            Ok(a) => a,
-            Err(e) => {
-                let _ = write_reply(stream, Reply::GeneralFailure, fallback).await;
-                return Err(e);
-            }
-        };
-
-        match TcpStream::connect(target_addr).await {
-            Ok(mut target) => {
-                let bind_addr = target.local_addr().unwrap_or(fallback);
-                write_reply(stream, Reply::Succeeded, bind_addr).await?;
-                copy_bidirectional(stream, &mut target).await?;
-                Ok(())
-            }
-            Err(e) => {
-                let _ = write_reply(stream, Reply::ConnectionRefused, fallback).await;
-                Err(ProxyError::Io(e))
-            }
-        }
-    }
 }
 
 #[async_trait]
-impl<A: Authenticator + 'static, R: AddressResolver + 'static> ConnectionHandler
-    for SocksHandler<A, R>
+impl<A: Authenticator + 'static, C: Connector + 'static> ConnectionHandler
+    for SocksHandler<A, C>
 {
     async fn handle(&self, mut stream: TcpStream) -> Result<()> {
         self.negotiate(&mut stream).await?;

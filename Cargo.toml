@@ -1,6 +1,12 @@
 [workspace]
 resolver = "2"
-members = ["parallax-core", "parallax-proxy", "parallax-server"]
+members = [
+    "parallax-core",
+    "parallax-platform",
+    "parallax-proxy",
+    "parallax-router",
+    "parallax-server",
+]
 
 [workspace.dependencies]
 tokio = { version = "1", features = ["net", "io-util"] }

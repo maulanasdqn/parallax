@@ -75,6 +75,25 @@ impl TargetAddr {
             _ => Err(ProxyError::UnsupportedAddrType),
         }
     }
+
+    pub async fn write_to<W: AsyncWrite + Unpin>(&self, writer: &mut W) -> Result<()> {
+        match self {
+            Self::V4(ip) => {
+                writer.write_u8(0x01).await?;
+                writer.write_all(&ip.octets()).await?;
+            }
+            Self::Domain(d) => {
+                writer.write_u8(0x03).await?;
+                writer.write_u8(d.len() as u8).await?;
+                writer.write_all(d.as_bytes()).await?;
+            }
+            Self::V6(ip) => {
+                writer.write_u8(0x04).await?;
+                writer.write_all(&ip.octets()).await?;
+            }
+        }
+        Ok(())
+    }
 }
 
 pub async fn write_reply<W: AsyncWrite + Unpin>(
@@ -108,6 +127,7 @@ pub enum ProxyError {
     UnsupportedAddrType,
     InvalidAddress,
     AuthFailed,
+    UpstreamFailed,
 }
 
 impl fmt::Display for ProxyError {
@@ -121,6 +141,7 @@ impl fmt::Display for ProxyError {
             Self::UnsupportedAddrType => write!(f, "unsupported address type"),
             Self::InvalidAddress => write!(f, "invalid address"),
             Self::AuthFailed => write!(f, "authentication failed"),
+            Self::UpstreamFailed => write!(f, "upstream proxy failed"),
         }
     }
 }
@@ -147,6 +168,11 @@ pub trait Authenticator: Send + Sync {
 #[async_trait]
 pub trait AddressResolver: Send + Sync {
     async fn resolve(&self, addr: TargetAddr, port: u16) -> Result<SocketAddr>;
+}
+
+#[async_trait]
+pub trait Connector: Send + Sync {
+    async fn connect(&self, addr: TargetAddr, port: u16) -> Result<TcpStream>;
 }
 
 #[async_trait]

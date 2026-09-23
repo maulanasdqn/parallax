@@ -1,0 +1,10 @@
+[package]
+name = "parallax-router"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+parallax-core = { path = "../parallax-core" }
+tokio = { workspace = true }
+async-trait = { workspace = true }
+tracing = { workspace = true }

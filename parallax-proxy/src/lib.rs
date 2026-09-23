@@ -2,7 +2,9 @@ mod http;
 mod socks;
 
 pub use http::HttpHandler;
-pub use socks::{NoAuthenticator, PasswordAuthenticator, SocksHandler, TokioResolver};
+pub use socks::{
+    DirectConnector, NoAuthenticator, PasswordAuthenticator, SocksHandler, TokioResolver,
+};
 
 use async_trait::async_trait;
 use parallax_core::{ConnectionHandler, ProxyError, Result, SOCKS_VERSION};

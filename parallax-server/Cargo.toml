@@ -6,6 +6,7 @@ edition = "2021"
 [dependencies]
 parallax-core = { path = "../parallax-core" }
 parallax-proxy = { path = "../parallax-proxy" }
+parallax-router = { path = "../parallax-router" }
 tokio = { workspace = true, features = ["rt-multi-thread", "macros", "signal"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

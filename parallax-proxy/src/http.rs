@@ -1,21 +1,19 @@
 use async_trait::async_trait;
-use parallax_core::{
-    AddressResolver, ConnectionHandler, ProxyError, Result, TargetAddr,
-};
+use parallax_core::{ConnectionHandler, Connector, ProxyError, Result, TargetAddr};
 use tokio::io::{AsyncReadExt, AsyncWriteExt, copy_bidirectional};
 use tokio::net::TcpStream;
 
-pub struct HttpHandler<R: AddressResolver> {
+pub struct HttpHandler<C: Connector> {
     credentials: Option<(String, String)>,
-    resolver: R,
+    connector: C,
 }
 
-impl<R: AddressResolver> HttpHandler<R> {
-    pub fn new(credentials: Option<(String, String)>, resolver: R) -> Self {
-        Self { credentials, resolver }
+impl<C: Connector> HttpHandler<C> {
+    pub fn new(credentials: Option<(String, String)>, connector: C) -> Self {
+        Self { credentials, connector }
     }
 
-    async fn read_headers(&self, stream: &mut TcpStream) -> Result<String> {
+    async fn read_headers(stream: &mut TcpStream) -> Result<String> {
         let mut buf = Vec::with_capacity(4096);
         loop {
             let byte = stream.read_u8().await?;
@@ -49,8 +47,7 @@ impl<R: AddressResolver> HttpHandler<R> {
 
     async fn tunnel(&self, stream: &mut TcpStream, host: &str, port: u16) -> Result<()> {
         let addr = TargetAddr::Domain(host.to_string());
-        let target_addr = self.resolver.resolve(addr, port).await?;
-        let mut target = TcpStream::connect(target_addr).await?;
+        let mut target = self.connector.connect(addr, port).await?;
         stream
             .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
             .await?;
@@ -68,9 +65,7 @@ impl<R: AddressResolver> HttpHandler<R> {
         raw_headers: &str,
     ) -> Result<()> {
         let addr = TargetAddr::Domain(host.to_string());
-        let target_addr = self.resolver.resolve(addr, port).await?;
-        let mut target = TcpStream::connect(target_addr).await?;
-
+        let mut target = self.connector.connect(addr, port).await?;
         let mut request = format!("{method} {path} HTTP/1.1\r\n");
         for line in raw_headers.lines().skip(1) {
             if line.is_empty() {
@@ -79,17 +74,14 @@ impl<R: AddressResolver> HttpHandler<R> {
             let lower = line.to_lowercase();
             if lower.starts_with("proxy-authorization:")
                 || lower.starts_with("proxy-connection:")
+                || lower.starts_with("connection:")
             {
-                continue;
-            }
-            if lower.starts_with("connection:") {
                 continue;
             }
             request.push_str(line);
             request.push_str("\r\n");
         }
         request.push_str("Connection: close\r\n\r\n");
-
         target.write_all(request.as_bytes()).await?;
         copy_bidirectional(stream, &mut target).await?;
         Ok(())
@@ -104,9 +96,9 @@ impl<R: AddressResolver> HttpHandler<R> {
 }
 
 #[async_trait]
-impl<R: AddressResolver + 'static> ConnectionHandler for HttpHandler<R> {
+impl<C: Connector + 'static> ConnectionHandler for HttpHandler<C> {
     async fn handle(&self, mut stream: TcpStream) -> Result<()> {
-        let headers = self.read_headers(&mut stream).await?;
+        let headers = Self::read_headers(&mut stream).await?;
         let request_line = headers.lines().next().ok_or(ProxyError::InvalidRequest)?;
         let parts: Vec<&str> = request_line.split_whitespace().collect();
 
