@@ -1,62 +1,92 @@
 # Parallax
 
-A lightweight, multi-protocol proxy server written in Rust. Drop-in replacement for dante-server with both SOCKS5 and HTTP proxy support on a single port.
+Indonesian mobile proxy platform with multi-protocol proxy server, upstream carrier routing, REST API, and SaaS dashboard. Built in Rust with trait-based clean architecture.
 
-## Features
+## Workspaces
 
-- **SOCKS5** (RFC 1928) with TCP CONNECT
-- **HTTP CONNECT** tunneling (HTTPS passthrough)
-- **HTTP forward proxy** (plain HTTP requests)
-- **Auto-detection** -- protocol is identified per-connection by peeking the first byte, so SOCKS5 and HTTP clients share one port
-- **Authentication** -- no-auth or username/password (SOCKS5 via RFC 1929, HTTP via `Proxy-Authorization: Basic`)
-- **Server-side DNS** -- domain names are resolved by the proxy (SOCKS5h behavior)
-- **Graceful shutdown** on SIGINT/SIGTERM
-- **Structured logging** via `tracing`
+| Workspace | Binary | Purpose |
+|---|---|---|
+| `parallax-core` | -- | Protocol types, error types, trait definitions |
+| `parallax-proxy` | -- | Direct proxy handlers (SOCKS5, HTTP, auto-detect) |
+| `parallax-router` | -- | Upstream chaining with carrier-based routing |
+| `parallax-server` | `parallax-server` | Proxy server entry point (direct or routing mode) |
+| `parallax-api` | `parallax-api` | REST API with Axum (hexagonal architecture) |
+| `parallax-platform` | `parallax-platform` | SaaS dashboard with TopCoat + Tailwind |
 
 ## Architecture
 
-Multi-workspace Rust project with trait-based clean architecture.
-
 ```
-parallax/
-  Cargo.toml              workspace root
-  parallax-core/          protocol types, error types, trait definitions
-  parallax-proxy/         trait implementations, protocol handlers
-    src/lib.rs            ProtocolHandler (auto-detect + delegate)
-    src/socks.rs          SocksHandler, authenticators, resolver
-    src/http.rs           HttpHandler (CONNECT + forward)
-  parallax-server/        binary entry point, config, accept loop
+                    parallax-platform (TopCoat dashboard)
+                            |
+                    parallax-api (Axum REST API)
+                            |
+                        PostgreSQL
+                            
+Clients --> parallax-server (proxy) --> Direct / Upstream chain
+                |               |
+          parallax-proxy   parallax-router
+                |               |
+              parallax-core (traits)
 ```
 
-### Traits
+### Proxy traits (parallax-core)
 
-| Trait | Defined in | Purpose |
-|---|---|---|
-| `Authenticator` | `parallax-core` | SOCKS5 auth method negotiation |
-| `AddressResolver` | `parallax-core` | Resolve `TargetAddr` (IPv4/IPv6/Domain) to `SocketAddr` |
-| `ConnectionHandler` | `parallax-core` | Handle a full TCP connection lifecycle |
-
-### Concrete implementations
-
-| Type | Crate | Implements |
-|---|---|---|
-| `NoAuthenticator` | `parallax-proxy` | `Authenticator` -- method 0x00, no sub-negotiation |
-| `PasswordAuthenticator` | `parallax-proxy` | `Authenticator` -- method 0x02, RFC 1929 |
-| `TokioResolver` | `parallax-proxy` | `AddressResolver` -- tokio DNS lookup |
-| `SocksHandler<A, R>` | `parallax-proxy` | `ConnectionHandler` -- full SOCKS5 flow |
-| `HttpHandler<R>` | `parallax-proxy` | `ConnectionHandler` -- HTTP CONNECT + forward |
-| `ProtocolHandler<S, H>` | `parallax-proxy` | `ConnectionHandler` -- peeks first byte, delegates to S or H |
-
-### Dependencies
-
-| Crate | Purpose |
+| Trait | Purpose |
 |---|---|
-| `tokio` | Async runtime, TCP, `copy_bidirectional` |
-| `async-trait` | Async methods in traits |
-| `tracing` | Structured logging |
-| `tracing-subscriber` | Log output formatting |
+| `Authenticator` | SOCKS5 auth method negotiation |
+| `AddressResolver` | Resolve `TargetAddr` to `SocketAddr` |
+| `Connector` | Establish connection to target (direct or chained) |
+| `ConnectionHandler` | Handle a full TCP connection lifecycle |
 
-No HTTP framework. SOCKS5 is parsed from raw TCP. HTTP headers are parsed manually. Base64 encoding for HTTP Basic auth is implemented inline.
+### Proxy implementations (parallax-proxy)
+
+| Type | Implements |
+|---|---|
+| `NoAuthenticator` | `Authenticator` -- no auth |
+| `PasswordAuthenticator` | `Authenticator` -- RFC 1929 username/password |
+| `TokioResolver` | `AddressResolver` -- tokio DNS |
+| `DirectConnector<R>` | `Connector` -- resolve + TCP connect |
+| `SocksHandler<A, C>` | `ConnectionHandler` -- SOCKS5 flow |
+| `HttpHandler<C>` | `ConnectionHandler` -- HTTP CONNECT + forward |
+| `ProtocolHandler<S, H>` | `ConnectionHandler` -- auto-detect SOCKS5/HTTP |
+
+### Routing traits (parallax-router)
+
+| Trait | Purpose |
+|---|---|
+| `RouteResolver` | Map carrier name to upstream `SocketAddr` |
+| `UpstreamConnector` | Chain connection through upstream SOCKS5 proxy |
+
+| Type | Implements |
+|---|---|
+| `RouteTable` | `RouteResolver` -- carrier prefix to upstream mapping |
+| `Socks5Chain` | `UpstreamConnector` -- SOCKS5 client for chaining |
+| `RoutingSocksHandler<R, U>` | `ConnectionHandler` -- carrier-based SOCKS5 |
+| `RoutingHttpHandler<R, U>` | `ConnectionHandler` -- carrier-based HTTP |
+
+### API architecture (parallax-api, hexagonal)
+
+```
+adapter/http/ --> application/service.rs --> domain/port.rs <-- adapter/postgres.rs
+   (inbound)        (use cases)              (traits only)       (outbound)
+```
+
+| Layer | Contents |
+|---|---|
+| `domain/entity.rs` | User, Plan, Carrier, Session + ZodSchema validation |
+| `domain/port.rs` | Repository traits (UserRepository, PlanRepository, CarrierRepository, SessionRepository) |
+| `application/service.rs` | AppService orchestrating use cases via port traits |
+| `adapter/postgres.rs` | PostgreSQL implementations of all repository traits |
+| `adapter/http/` | Axum route handlers (users CRUD, carriers, sessions, health) |
+
+### Platform pages (parallax-platform)
+
+| Route | Page |
+|---|---|
+| `/` | Dashboard -- stats, proxy endpoint status, quick connect |
+| `/users` | User management -- create, suspend, delete, regen API key |
+| `/proxies` | Proxy management -- endpoints, carriers, connection guide |
+| `/api/*` | JSON API endpoints |
 
 ## Build
 
@@ -64,118 +94,121 @@ No HTTP framework. SOCKS5 is parsed from raw TCP. HTTP headers are parsed manual
 cargo build --release
 ```
 
-Binary is at `target/release/parallax-server`.
+## Proxy server
 
-## Usage
+### Direct mode (exit node)
 
 ```sh
-# Start with defaults (0.0.0.0:1080, no auth)
 cargo run -p parallax-server
 
-# Custom listen address
-PROXY_LISTEN=127.0.0.1:9090 cargo run -p parallax-server
-
-# With username/password auth
+PROXY_LISTEN=0.0.0.0:1080 cargo run -p parallax-server
 PROXY_USER=admin PROXY_PASS=secret cargo run -p parallax-server
 ```
 
-## Configuration
+### Routing mode (entry node)
 
-All configuration is via environment variables.
+```sh
+ROUTES=telkomsel=10.0.0.2:1081,indosat=10.0.0.2:1082,xl=10.0.0.2:1083 \
+PROXY_PASS=secret \
+cargo run -p parallax-server
+```
+
+Clients connect with `{carrier}-{username}:{password}` credentials. The carrier prefix selects which upstream exit node to chain through.
+
+### Configuration
 
 | Variable | Default | Description |
 |---|---|---|
-| `PROXY_LISTEN` | `0.0.0.0:1080` | Address and port to bind |
-| `PROXY_USER` | *(unset)* | Username for auth (both must be set to enable) |
-| `PROXY_PASS` | *(unset)* | Password for auth (both must be set to enable) |
+| `PROXY_LISTEN` | `0.0.0.0:1080` | Listen address |
+| `PROXY_USER` | *(unset)* | Single-user username (direct mode) |
+| `PROXY_PASS` | *(unset)* | Password (direct and routing mode) |
+| `ROUTES` | *(unset)* | Carrier routing table (enables routing mode) |
 
-When `PROXY_USER` and `PROXY_PASS` are both set, authentication is required for all protocols:
-- SOCKS5 clients must negotiate username/password auth (RFC 1929)
-- HTTP clients must send `Proxy-Authorization: Basic <base64(user:pass)>` header
-
-When either is unset, the proxy runs in no-auth mode.
-
-## Testing
-
-### SOCKS5
+### Testing
 
 ```sh
-# HTTP through SOCKS5 (proxy resolves DNS)
+# SOCKS5
 curl -x socks5h://localhost:1080 http://httpbin.org/ip
 
-# HTTPS through SOCKS5
-curl -x socks5h://localhost:1080 https://httpbin.org/ip
-
-# With auth
-curl -x socks5h://admin:secret@localhost:1080 http://httpbin.org/ip
-```
-
-### HTTP proxy
-
-```sh
-# HTTPS via CONNECT tunnel
+# HTTP CONNECT
 curl -x http://localhost:1080 https://httpbin.org/ip
 
-# Plain HTTP forwarding
-curl -x http://localhost:1080 http://httpbin.org/ip
-
-# With auth
-curl -x http://admin:secret@localhost:1080 https://httpbin.org/ip
+# Routing mode
+curl -x socks5h://telkomsel-admin:secret@localhost:1080 http://httpbin.org/ip
 ```
 
-### Browser configuration
+### Supported protocols
 
-Set your browser's proxy to `localhost:1080` for both SOCKS and HTTP proxy fields. Firefox supports per-protocol proxy configuration under Settings > Network Settings > Manual proxy configuration.
+- **SOCKS5** (RFC 1928) with TCP CONNECT and username/password auth (RFC 1929)
+- **HTTP CONNECT** tunneling for HTTPS passthrough
+- **HTTP forward proxy** for plain HTTP requests
+- Auto-detection per-connection: first byte `0x05` is SOCKS5, anything else is HTTP
 
-### systemd
+## REST API
 
-```ini
-[Unit]
-Description=Parallax Proxy Server
-After=network.target
-
-[Service]
-Type=simple
-ExecStart=/usr/local/bin/parallax-server
-Environment=PROXY_LISTEN=0.0.0.0:1080
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
+```sh
+DATABASE_URL=postgres://user:pass@localhost/parallax cargo run -p parallax-api
 ```
 
-## Protocol details
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/health` | Health check |
+| GET | `/api/users` | List users |
+| POST | `/api/users` | Create user (validated with zod-rs) |
+| DELETE | `/api/users/{id}` | Delete user |
+| PATCH | `/api/users/{id}/toggle` | Suspend/activate user |
+| POST | `/api/users/{id}/regenerate` | Regenerate API key |
+| GET | `/api/carriers` | List carriers |
+| GET | `/api/sessions` | List sessions |
 
-### SOCKS5 (RFC 1928)
+### Configuration
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | *(required)* | PostgreSQL connection string |
+| `API_LISTEN` | `0.0.0.0:3001` | Listen address |
+
+## Dashboard
+
+```sh
+DATABASE_URL=postgres://user:pass@localhost/parallax topcoat dev
+```
+
+Requires the TopCoat CLI: `cargo install topcoat-cli@0.6.2`
+
+## Infrastructure
+
+Currently deployed on Hostinger VPS (`parallax.stynx.app:1080`) via NixOS with Clan. The proxy runs as a hardened `DynamicUser` systemd service.
+
+### Mobile proxy roadmap
+
+The platform is designed for carrier-based routing through Indonesian mobile networks. When USB 4G modems are connected to a Raspberry Pi:
 
 ```
-Client -> Server:  [0x05, n_methods, methods...]
-Server -> Client:  [0x05, chosen_method]
-  (if username/password -- RFC 1929):
-  Client -> Server:  [0x01, ulen, username, plen, password]
-  Server -> Client:  [0x01, status]
-Client -> Server:  [0x05, 0x01(CONNECT), 0x00, addr_type, dst_addr, dst_port]
-Server -> Client:  [0x05, reply, 0x00, addr_type, bind_addr, bind_port]
-                    <bidirectional TCP relay>
+Client --> parallax.stynx.app:1080 (Hostinger, entry)
+           |
+           WireGuard tunnel
+           |
+           Raspberry Pi + USB modems
+           |-- Telkomsel (port 1081)
+           |-- Indosat   (port 1082)
+           |-- XL Axiata (port 1083)
 ```
 
-Supported address types: IPv4 (0x01), Domain (0x03), IPv6 (0x04).
+Each modem gets its own exit proxy instance. The entry server routes by carrier prefix in the username.
 
-Only the CONNECT command (0x01) is implemented. BIND and UDP ASSOCIATE return `CommandNotSupported`.
+## Dependencies
 
-### HTTP proxy
-
-**CONNECT** (HTTPS tunneling): The proxy reads the `CONNECT host:port` request, connects to the target, responds with `200 Connection Established`, then relays bytes bidirectionally. TLS passes through opaquely.
-
-**Forward** (plain HTTP): The proxy reads the full request with absolute URL (`GET http://host/path`), rewrites it to a relative path, strips `Proxy-Authorization` and `Proxy-Connection` headers, adds `Connection: close`, and forwards to the target. Response is relayed back to the client.
-
-### Auto-detection
-
-The first byte of each connection determines the protocol:
-- `0x05` -- SOCKS5 (version byte)
-- Anything else -- HTTP (ASCII method character)
-
-This happens per-connection, so SOCKS5 and HTTP clients can connect to the same port simultaneously.
+| Crate | Used by | Purpose |
+|---|---|---|
+| `tokio` | all | Async runtime |
+| `async-trait` | all | Async methods in traits |
+| `tracing` | server, api | Structured logging |
+| `axum` | api | HTTP framework |
+| `sqlx` | api, platform | PostgreSQL driver |
+| `zod-rs` | api, platform | Request validation (ZodSchema derive) |
+| `paginator-rs` | api, platform | Pagination |
+| `topcoat` | platform | Full-stack web framework |
 
 ## License
 
