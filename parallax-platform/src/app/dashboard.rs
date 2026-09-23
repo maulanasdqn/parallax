@@ -1,35 +1,21 @@
 use topcoat::{
     Result,
-    context::{Cx, app_context},
     router::page,
     view::{component, view},
 };
 
-use crate::db::Database;
-
 #[page("/")]
-async fn home(cx: &Cx) -> Result {
-    let db = app_context::<Database>(cx);
-    let user_count = db.user_count().await.to_string();
-    let session_count = db.active_session_count().await.to_string();
-    let bw = format_bytes(db.total_bandwidth().await as u64);
-    let carrier_count = db.carrier_count().await;
-    let carrier_text = if carrier_count == 0 {
-        "Direct only".to_string()
-    } else {
-        format!("{carrier_count} online")
-    };
-
+async fn home() -> Result {
     view! {
         <div>
             <h2 class="text-2xl font-semibold tracking-tight">"Dashboard"</h2>
             <p class="text-zinc-400 mt-1 text-sm">"Overview of your proxy infrastructure"</p>
 
             <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
-                stat_card(label: "Total Users", value: &user_count)
-                stat_card(label: "Active Sessions", value: &session_count)
-                stat_card(label: "Total Bandwidth", value: &bw)
-                stat_card(label: "Carriers", value: &carrier_text)
+                stat_card(id: "stat-users", label: "Total Users")
+                stat_card(id: "stat-sessions", label: "Active Sessions")
+                stat_card(id: "stat-bandwidth", label: "Total Bandwidth")
+                stat_card(id: "stat-carriers", label: "Carriers")
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
@@ -37,15 +23,37 @@ async fn home(cx: &Cx) -> Result {
                 quick_connect()
             </div>
         </div>
+
+        <script>
+            "const API = window.__API_URL || 'http://localhost:3001';"
+            "fetch(API + '/api/users').then(r => r.json()).then(d => {"
+            "  document.getElementById('stat-users').textContent = d.length;"
+            "}).catch(() => {});"
+            "fetch(API + '/api/sessions').then(r => r.json()).then(d => {"
+            "  document.getElementById('stat-sessions').textContent = d.filter(s => s.active).length;"
+            "  const bytes = d.reduce((a, s) => a + s.bytes_up + s.bytes_down, 0);"
+            "  document.getElementById('stat-bandwidth').textContent = formatBytes(bytes);"
+            "}).catch(() => {});"
+            "fetch(API + '/api/carriers').then(r => r.json()).then(d => {"
+            "  const online = d.filter(c => c.online).length;"
+            "  document.getElementById('stat-carriers').textContent = online > 0 ? online + ' online' : 'Direct only';"
+            "}).catch(() => {});"
+            "function formatBytes(b) {"
+            "  if (b === 0) return '0 B';"
+            "  const u = ['B','KB','MB','GB','TB'];"
+            "  const i = Math.floor(Math.log(b) / Math.log(1024));"
+            "  return (b / Math.pow(1024, i)).toFixed(1) + ' ' + u[i];"
+            "}"
+        </script>
     }
 }
 
 #[component]
-async fn stat_card(label: &str, value: &str) -> Result {
+async fn stat_card(id: &str, label: &str) -> Result {
     view! {
         <div class="rounded-lg border border-zinc-800 bg-zinc-900 p-5">
             <p class="text-xs font-medium text-zinc-500 uppercase tracking-wider">(label)</p>
-            <p class="text-2xl font-semibold mt-2">(value)</p>
+            <p class="text-2xl font-semibold mt-2" id=(id)>"--"</p>
         </div>
     }
 }
@@ -58,18 +66,9 @@ async fn endpoint_status() -> Result {
                 <h3 class="text-sm font-semibold">"Proxy Endpoint"</h3>
             </div>
             <div class="p-5 space-y-3 text-sm">
-                <div class="flex items-center justify-between py-2 border-b border-zinc-800/50">
-                    <span class="text-zinc-500">"Host"</span>
-                    <code class="text-emerald-400 text-xs bg-zinc-800 px-2 py-1 rounded">"parallax.stynx.app"</code>
-                </div>
-                <div class="flex items-center justify-between py-2 border-b border-zinc-800/50">
-                    <span class="text-zinc-500">"Port"</span>
-                    <code class="text-emerald-400 text-xs bg-zinc-800 px-2 py-1 rounded">"1080"</code>
-                </div>
-                <div class="flex items-center justify-between py-2 border-b border-zinc-800/50">
-                    <span class="text-zinc-500">"Location"</span>
-                    <span class="text-zinc-300">"Hostinger VPS, Indonesia"</span>
-                </div>
+                info_row(label: "Host", value: "parallax.stynx.app")
+                info_row(label: "Port", value: "1080")
+                info_row(label: "Location", value: "Hostinger VPS, Indonesia")
                 <div class="flex items-center justify-between py-2">
                     <span class="text-zinc-500">"Status"</span>
                     <div class="flex items-center gap-2">
@@ -78,6 +77,16 @@ async fn endpoint_status() -> Result {
                     </div>
                 </div>
             </div>
+        </div>
+    }
+}
+
+#[component]
+async fn info_row(label: &str, value: &str) -> Result {
+    view! {
+        <div class="flex items-center justify-between py-2 border-b border-zinc-800/50">
+            <span class="text-zinc-500">(label)</span>
+            <code class="text-emerald-400 text-xs bg-zinc-800 px-2 py-1 rounded">(value)</code>
         </div>
     }
 }
@@ -108,20 +117,7 @@ async fn quick_connect() -> Result {
                         "curl -x socks5h://user:apikey@parallax.stynx.app:1080 https://httpbin.org/ip"
                     </code>
                 </div>
-                <p class="text-xs text-zinc-600 mt-2">
-                    "Replace user and apikey with credentials from the Users page."
-                </p>
             </div>
         </div>
     }
-}
-
-fn format_bytes(bytes: u64) -> String {
-    if bytes == 0 {
-        return "0 B".into();
-    }
-    let units = ["B", "KB", "MB", "GB", "TB"];
-    let i = (bytes as f64).log(1024.0).floor() as usize;
-    let val = bytes as f64 / 1024_f64.powi(i as i32);
-    format!("{val:.1} {}", units[i.min(units.len() - 1)])
 }

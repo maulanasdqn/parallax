@@ -1,4 +1,3 @@
-mod api;
 mod dashboard;
 mod proxies;
 mod users;
@@ -81,11 +80,16 @@ async fn nav_item(href: &str, label: &str, icon: &str) -> Result {
 #[component]
 async fn topbar() -> Result {
     view! {
-        <div class="flex items-center justify-between">
+        <div class="flex items-center justify-between w-full">
             <div></div>
             <div class="flex items-center gap-4">
-                <span class="text-xs px-2 py-1 rounded bg-emerald-900 text-emerald-400">"3 carriers online"</span>
+                <span class="text-xs px-2 py-1 rounded bg-emerald-900 text-emerald-400" id="status-badge">"loading..."</span>
             </div>
         </div>
+        <script>
+            "fetch('/api/health').then(r => r.ok ? "
+            "document.getElementById('status-badge').textContent = 'online' : null"
+            ").catch(() => document.getElementById('status-badge').textContent = 'offline')"
+        </script>
     }
 }
